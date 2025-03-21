@@ -10,11 +10,16 @@
 
 #pragma pack(push, 1)
 struct Metadata {
-    uint32_t file_size;
-    uint32_t num_chunks;
-    uint32_t chunk_size;
+    uint64_t file_size;
+    uint64_t num_chunks;
+    uint64_t chunk_size;
 };
 #pragma pack(pop)
+
+// Hàm chuyển đổi 64-bit từ network to host
+uint64_t ntohll(uint64_t value) {
+    return (((uint64_t)ntohl(value & 0xFFFFFFFF)) << 32) | ntohl(value >> 32);
+}
 
 int main() {
     struct sockaddr_in server_addr;
@@ -60,11 +65,7 @@ int main() {
         if (strlen(buffer) == 0) {
             strcat(request, FILE_LIST);
         } else {
-            if (strncmp(buffer, "REQUEST_METADATA:", 16) != 0) {
-                strcat(request, buffer);
-            } else {
-                strcpy(request, buffer);
-            }
+            strcpy(request, buffer);
         }
 
         // Gửi yêu cầu
@@ -83,11 +84,12 @@ int main() {
                                (struct sockaddr*)&server_addr, &addr_len);
         if (recv_len > 0) {
             // Xử lý phản hồi metadata
-            if (strncmp(buffer, "REPLY_METADATA:", 14) == 0) {
-                char* colon1 = strchr(buffer + 14, ':');
+            if (strncmp(buffer, "REPLY_METADATA:", 15) == 0) {
+                char* colon1 = strchr(buffer + 15, ':');
+                printf("%d", (int)(*&colon1 - &buffer[0]));
                 if (colon1) {
                     *colon1 = '\0';
-                    char* filename = buffer + 14;
+                    char* filename = buffer + 15;
                     char* meta_start = colon1 + 1;
                     
                     // Kiểm tra độ dài dữ liệu
@@ -97,9 +99,9 @@ int main() {
                         
                         // Chuyển đổi byte order
                         Metadata meta;
-                        meta.file_size = ntohl(net_meta.file_size);
-                        meta.num_chunks = ntohl(net_meta.num_chunks);
-                        meta.chunk_size = ntohl(net_meta.chunk_size);
+                        meta.file_size = ntohll(net_meta.file_size);
+                        meta.num_chunks = ntohll(net_meta.num_chunks);
+                        meta.chunk_size = ntohll(net_meta.chunk_size);
 
                         std::cout << "\n--- Metadata ---\n"
                                   << "File: " << filename << "\n"
