@@ -1,0 +1,4 @@
+bigfile.dat 1MB
+
+REQUEST_METADATA:bigfile.dat
+REQUEST_CHUNK:bigfile.dat:3
