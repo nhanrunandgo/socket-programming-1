@@ -5,23 +5,18 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <limits>
-
-#define SERVER_PORT 12345
-#define BUFFER_SIZE 4096
-#define CHUNK_SIZE 4096
-#define FILES_DIR "files/"
-
-#define REQUEST_CHUNK "REQUEST_CHUNK:"
+#include "socket.h"
 
 #pragma pack(push, 1)
 struct Metadata {
-    uint64_t file_size;
-    uint64_t num_chunks;
-    uint64_t chunk_size;
-};
-#pragma pack(pop)
+    uint64_t file_size;     // Kích thước file
+    uint64_t num_chunks;    // Số lượng chunk
+    uint64_t chunk_size;    // Kích thước chunk
+};  // Cấu trúc meta của file
 
-// Hàm chuyển đổi 64-bit host to network
+#pragma pack(pop)   // Đóng gói packet
+
+// Hàm chuyển đổi 64-bit host to network (đưa Little/Big Endian -> Big Endian (Chuẩn chung của network))
 uint64_t htonll(uint64_t value) {
     return (((uint64_t)htonl(value & 0xFFFFFFFF)) << 32 | htonl(value >> 32));
 }
@@ -41,50 +36,59 @@ int main() {
     // Cấu hình địa chỉ server
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(SERVER_PORT);
+    server_addr.sin_addr.s_addr = INADDR_ANY;   // IP address
+    server_addr.sin_port = htons(SERVER_PORT);  // Port
 
     if (bind(server_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         std::cerr << "Lỗi bind socket" << std::endl;
         close(server_sock);
-        return 1;
+        return 404;
     }
 
     std::cout << "UDP Server đang chạy trên cổng " << SERVER_PORT << "...\n";
 
     while (true) {
+        // Đọc từ socket
         int recv_len = recvfrom(server_sock, buffer, BUFFER_SIZE - 1, 0,
                                (struct sockaddr*)&client_addr, &client_len);
-
+        
+        // Ngắt buffer để đảm bảo an toàn khi đọc
         if (recv_len > 0) {
             buffer[recv_len] = '\0';
-            std::cout << "Nhận từ [" << inet_ntoa(client_addr.sin_addr) << ":" 
-                      << ntohs(client_addr.sin_port) << "]: " << buffer << std::endl;
 
-            // Xử lý yêu cầu metadata
-            if (strncmp(buffer, "REQUEST_METADATA:", 17) == 0) {  // Sửa từ 16 thành 17 để khớp độ dài chuỗi
+            // Debug
+            std::cout << "\n>>> Nhận từ [" << inet_ntoa(client_addr.sin_addr) << ":" 
+                      << ntohs(client_addr.sin_port) << "]: " << buffer << "\n";
+
+            // Xử lý yêu cầu metadata (REQUEST_METADATA:filename)
+            if (strncmp(buffer, REQUEST_METADATA, strlen(REQUEST_METADATA)) == 0) {
                 char filename[256];
-                strncpy(filename, buffer + 17, sizeof(filename) - 1);
+                strncpy(filename, buffer + strlen(REQUEST_METADATA), sizeof(filename) - 1); // Trích xuất filename từ buffer
                 filename[sizeof(filename) - 1] = '\0';
 
                 // Tạo đường dẫn đầy đủ
                 char fullpath[512];
-                snprintf(fullpath, sizeof(fullpath), "%s%s", FILES_DIR, filename);
-                struct stat file_stat;
+                snprintf(fullpath, sizeof(fullpath), "%s%s", FILES_DIR, filename); // Ghép thành path dạng: files/filename
+
+                struct stat file_stat;  // Struct để lấy thông tin file (file size...)
                 Metadata meta = {0};
                 int fd = open(fullpath, O_RDONLY);
                 
-                if (fd != -1 && fstat(fd, &file_stat) == 0) {
+                // Nếu file tồn tại
+                if (fd != -1 && fstat(fd, &file_stat) == 0) {  
                     meta.file_size = file_stat.st_size;
-                    meta.chunk_size = CHUNK_SIZE;
+                    meta.chunk_size = CHUNK_SIZE;   // Lấy chunk size mặc định
                     meta.num_chunks = (file_stat.st_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
                     close(fd);
-                } else {
+                } 
+                // File lỗi hoặc không tồn tại thì trả về meta rỗng
+                else {
                     meta.file_size = 0;
                     meta.num_chunks = 0;
                     meta.chunk_size = 0;
                 }
                 
+                //Debug
                 std::cout << "\n--- Metadata ---\n"
                           << "File: " << filename << "\n"
                           << "Kích thước: " << meta.file_size << " bytes\n"
@@ -100,7 +104,7 @@ int main() {
 
                 // Đóng gói dữ liệu
                 char reply[BUFFER_SIZE];
-                snprintf(reply, sizeof(reply), "REPLY_METADATA:%s:", filename);
+                snprintf(reply, sizeof(reply), "%s%s:", REPLY_METADATA, filename);
 
                 // Copy dữ liệu metadata vào buffer
                 size_t header_len = strlen(reply);
@@ -110,39 +114,46 @@ int main() {
                 sendto(server_sock, reply, total_len, 0,
                       (struct sockaddr*)&client_addr, client_len);
                 printf("%s\n", reply);
+                continue;
             }
-            // Xử lý yêu cầu chunk REQUEST_CHUNK:filename:10
+            // Xử lý yêu cầu chunk với định dạng: [REQUEST_CHUNK:filename:chunk_number]
             else if (strncmp(buffer, REQUEST_CHUNK, strlen(REQUEST_CHUNK)) == 0) {
                 char *end_name_colon = strchr(buffer + strlen(REQUEST_CHUNK), ':'); // Kết thúc filename
                 if (end_name_colon != NULL) {
                     *end_name_colon = '\0'; 
-                    char filename[256];
+                    char filename[MAX_FILE_LENGTH];
                     strncpy(filename, buffer + strlen(REQUEST_CHUNK), sizeof(filename) - 1);
                     filename[sizeof(filename) - 1] = '\0';
                     
                     uint64_t chunk_index = std::strtoul(end_name_colon + 1, nullptr, 10);
 
+                    //Debug
                     std::cout << "\n--- Phân giải ---\n"
                                 << "File: " << filename << "\n"
                                 << "Chunk ID: " << chunk_index << "\n"
                                 << "----------------\n";
                     
-                    // Tạo đường dẫn đầy đủ
+                    // Tạo đường dẫn đầy đủ (files/filename)
                     char fullpath[512];
                     snprintf(fullpath, sizeof(fullpath), "%s%s", FILES_DIR, filename);
                     
+                    // Tiến hành đọc file
                     int fd = open(fullpath, O_RDONLY);
+
+                    // File mở được
                     if (fd != -1) {
                         struct stat file_stat;
+                        // Lấy được thông tin của file (file size...)
                         if (fstat(fd, &file_stat) == 0) {
                             uint32_t file_size = file_stat.st_size;
                             uint32_t num_chunks = (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
                             
+                            // Nếu chunk_id trong request nằm trong phạm vi file
                             if (chunk_index < num_chunks) {
-                                // Tính offset và kích thước chunk
+                                // Tính offset và kích thước thật của chunk 
                                 off_t offset = static_cast<off_t>(chunk_index) * CHUNK_SIZE;
                                 size_t actual_chunk_size = (chunk_index == num_chunks - 1) ?
-                                    (file_size % CHUNK_SIZE ? file_size % CHUNK_SIZE : CHUNK_SIZE) : CHUNK_SIZE;
+                                    (file_size % CHUNK_SIZE ? file_size % CHUNK_SIZE : CHUNK_SIZE) : CHUNK_SIZE; 
                                 
                                 // Đọc dữ liệu chunk
                                 char chunk_data[CHUNK_SIZE];
@@ -150,9 +161,9 @@ int main() {
                                 ssize_t read_len = read(fd, chunk_data, actual_chunk_size);
                                 
                                 if (read_len == actual_chunk_size) {
-                                    // Tạo phản hồi
+                                    // Tạo gói tin phản hồi REPLY_CHUNK (REPLY_CHUNK:filename:id:data_in_binary)
                                     char reply[BUFFER_SIZE];
-                                    snprintf(reply, sizeof(reply), "REPLY_CHUNK:%s:%lu:", filename, chunk_index);
+                                    snprintf(reply, sizeof(reply), "%s%s:%lu:", REPLY_CHUNK, filename, chunk_index);
                                     size_t header_len = strlen(reply);
                                     memcpy(reply + header_len, chunk_data, actual_chunk_size);
                                     size_t total_len = header_len + actual_chunk_size;
@@ -162,14 +173,14 @@ int main() {
                                 } else {
                                     // Lỗi đọc file
                                     char error_reply[BUFFER_SIZE];
-                                    snprintf(error_reply, sizeof(error_reply), "REPLY_CHUNK:%s:%lu:ERROR_READ", filename, chunk_index);
+                                    snprintf(error_reply, sizeof(error_reply), "%s%s:%lu:ERROR_READ", REPLY_CHUNK, filename, chunk_index);
                                     sendto(server_sock, error_reply, strlen(error_reply), 0,
                                             (struct sockaddr*)&client_addr, client_len);
                                 }
                             } else {
-                                // Chunk index không hợp lệ
+                                // Chunk_id không hợp lệ (nằm ngoài phạm vi file)
                                 char error_reply[BUFFER_SIZE];
-                                snprintf(error_reply, sizeof(error_reply), "REPLY_CHUNK:%s:%lu:ERROR_INDEX", filename, chunk_index);
+                                snprintf(error_reply, sizeof(error_reply), "%s%s:%lu:ERROR_INDEX", REPLY_CHUNK, filename, chunk_index);
                                 sendto(server_sock, error_reply, strlen(error_reply), 0,
                                         (struct sockaddr*)&client_addr, client_len);
                             }
@@ -177,14 +188,27 @@ int main() {
                         } else {
                             // Không mở được file
                             char error_reply[BUFFER_SIZE];
-                            snprintf(error_reply, sizeof(error_reply), "REPLY_CHUNK:%s:%lu:ERROR_OPEN", filename, chunk_index);
+                            snprintf(error_reply, sizeof(error_reply), "%s%s:%lu:ERROR_OPEN", REPLY_CHUNK, filename, chunk_index);
                             sendto(server_sock, error_reply, strlen(error_reply), 0,
                                    (struct sockaddr*)&client_addr, client_len);
                         }
                     }
+                    else {
+                        // Không mở được file
+                        char error_reply[BUFFER_SIZE];
+                        snprintf(error_reply, sizeof(error_reply), "%s%s:%lu:ERROR_OPEN", REPLY_CHUNK, filename, chunk_index);
+                        sendto(server_sock, error_reply, strlen(error_reply), 0,
+                               (struct sockaddr*)&client_addr, client_len);
+                    }
+                    continue;
                 }
             }
         }
+        // Không mở được file
+        char error_reply[BUFFER_SIZE];
+        snprintf(error_reply, sizeof(error_reply), "%sERROR_COMMAND", REPLY_CHUNK);
+        sendto(server_sock, error_reply, strlen(error_reply), 0,
+               (struct sockaddr*)&client_addr, client_len);
     }
 
     close(server_sock);
