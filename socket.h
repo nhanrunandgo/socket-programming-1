@@ -1,8 +1,12 @@
 /*
-Các lệnh để thử:
+System test:
 REQUEST_METADATA:_serverlist.svl
 REQUEST_CHUNK:_serverlist.svl:0
 REQUEST_CHUNK:_serverlist.svl:10
+REQUEST_METADATA:filename
+ssss
+REQUEST_CHUNK:hi:
+REQUEST_CHUNK:_serverlist.svl
 */
 
 /** COMMANDS **/
