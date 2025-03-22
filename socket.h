@@ -9,7 +9,8 @@ REQUEST_CHUNK:_serverlist.svl:10
 #define REQUEST_METADATA "REQUEST_METADATA:"    // Structure: REQUEST_METADATA:filename
 #define REPLY_METADATA "REPLY_METADATA:"        // Structure: REPLY_METADATA:filename:data_in_binary (struct Metadata)
 #define REQUEST_CHUNK "REQUEST_CHUNK:"          // Structure: REQUEST_CHUNK:filename:chunk_id
-#define REPLY_CHUNK "REPLY_CHUNK:"              // Structure: REPLY_CHUNK:filename:id:data_in_binary
+#define REPLY_CHUNK "REPLY_CHUNK:"              // Structure: REPLY_CHUNK:filename:id:data
+#define REPLY "REPLY:"                          // Structure: REPLY:ERROR
 
 /** DEFINITIONS **/
 #define SERVER_PORT 12345
