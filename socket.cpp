@@ -259,7 +259,8 @@ void handle_chunk_request(int server_sock, struct sockaddr_in &client_addr, sock
     tok = strtok(NULL, ":");    // Filename
     // Name does not exist
     if(tok == NULL) { 
-
+        handle_reply_to_client(server_sock, client_addr, client_len, BAD_REQUEST, strlen(BAD_REQUEST));
+        return;
     }
     strncpy(filename, tok, sizeof(filename) - 1);
     handle_fullname_getter(fullpath, tok);
@@ -271,7 +272,8 @@ void handle_chunk_request(int server_sock, struct sockaddr_in &client_addr, sock
     tok = strtok(NULL, ":");    // Chunk ID
     // Chunk ID does not exist
     if(tok == NULL) { 
-
+        handle_reply_to_client(server_sock, client_addr, client_len, BAD_REQUEST, strlen(BAD_REQUEST));
+        return;
     }
     uint64_t chunk_index = std::strtoul(tok, nullptr, 10);
 
