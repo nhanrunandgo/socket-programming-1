@@ -1,5 +1,13 @@
 #include "client.h"
 
+uint64_t ntohll(uint64_t value) {
+    return (((uint64_t)ntohl(value & 0xFFFFFFFF)) << 32) | ntohl(value >> 32); 
+} 
+   
+uint64_t htonll(uint64_t value) {
+    return (((uint64_t)htonl(value & 0xFFFFFFFF)) << 32) | htonl(value >> 32); 
+} 
+
 // Biến toàn cục để theo dõi các file đã được xử lý
 std::set<std::string> processed_files;
 std::mutex processed_files_mutex;
