@@ -1,0 +1,4 @@
+1KB.txt
+1MB.txt
+lalala.zip
+File1.zip

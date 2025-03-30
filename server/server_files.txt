@@ -1,0 +1,7 @@
+File1.zip 5242880
+File2.zip 10485760
+Hehe.txt 1113242
+1KB.txt 27
+SuNghiepChuong.mp4 2692492
+lalala.zip 488953
+1MB.txt 58479

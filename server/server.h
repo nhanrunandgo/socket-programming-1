@@ -28,8 +28,8 @@ Client -> Server
 - REPLY:0:ACK
 */
 #define REPLY "REPLY"
-#define BAD_REQUEST "ERROR:BAD REQUEST\0"
-#define INTERNAL_ERROR "ERROR:Internal server error"
+char BAD_REQUEST[] = "ERROR:BAD REQUEST\0";
+char INTERNAL_ERROR[] = "ERROR:Internal server error\0";
 
 /** DEFINITIONS **/
 #define SERVER_PORT 12345
@@ -39,8 +39,8 @@ Client -> Server
 #define CHUNK_SIZE 1024
 #define MAX_FILE_LENGTH 256
 #define DOWNLOAD_DIR "files/"
-#define DOWNLOAD_LIST "server_list.txt"
+#define DOWNLOAD_LIST "server_files.txt"
 
 
 #define MAX_RETRIES 3
-#define ACK_TIMEOUT 2000 // 2 seconds
+#define ACK_TIMEOUT 200 // milliseconds

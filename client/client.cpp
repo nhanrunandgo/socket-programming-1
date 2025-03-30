@@ -278,6 +278,7 @@ int main() {
                 for (int j = 0; j < i; ++j) close(list_sockets[j]);
                 goto request_command;
             }
+            
             uint64_t start_chunk = i * list_chunks_per_thread;
             uint64_t end_chunk = std::min((i + 1) * list_chunks_per_thread, num_list_chunks);
             if (start_chunk < end_chunk) {

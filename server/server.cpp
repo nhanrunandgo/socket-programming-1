@@ -145,6 +145,7 @@ int main() {
 }
 /// @brief Update list of files to download
 void update_list() {
+    std::cout << "Database is old. Reloading...\n";
     DIR *dir = opendir(DOWNLOAD_DIR);
 
     // Unable to open this path
@@ -212,6 +213,7 @@ void handle_fullname_getter(char* fullpath, char* &filename) {
     else {
         sprintf(fullpath, "%s/%s", DOWNLOAD_DIR, filename);
     }
+    std::cerr << fullpath << "\n";
 }
 
 /// @brief Handle metadata requests (REQUEST_METADATA:filename)
@@ -361,7 +363,7 @@ void handle_chunk_request(int server_sock, struct sockaddr_in &client_addr, sock
     snprintf(reply_message, sizeof(reply_message), "CHUNK:%s:%lu:", filename, chunk_index);
     size_t header_len = strlen(reply_message);
     memcpy(reply_message + header_len, chunk_data, actual_chunk_size);
-    size_t total_len = header_len + actual_chunk_size; // Removed + 1 for null terminator, handle_reply_to_client adds it
+    size_t total_len = header_len + actual_chunk_size;
     handle_reply_to_client(server_sock, client_addr, client_len, reply_message, total_len);
 }
 
@@ -425,7 +427,6 @@ void handle_reply_to_client(int server_sock, sockaddr_in &client_addr,
     size_t header_len = strlen(message);
     memcpy(message + header_len, buffer, buffer_len);
     size_t total_len = header_len + buffer_len;
-    message[total_len] = '\0'; // Ensure null termination
 
     // Save to pending
     PendingPacket packet {
