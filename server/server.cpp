@@ -405,7 +405,7 @@ void timeout_checker_thread(int server_sock) {
 
         // Wait with timeout
         std::unique_lock<std::mutex> lock(packets_mtx);
-        timeout_cv.wait_for(lock, std::chrono::milliseconds(500), [&]{
+        timeout_cv.wait_for(lock, std::chrono::milliseconds(ACK_TIMEOUT), [&]{
             return !running.load();
         });
     }

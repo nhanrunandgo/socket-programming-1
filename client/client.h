@@ -30,6 +30,7 @@
 #include <sys/stat.h>
 #endif
 
+#define CONSOLE_HEIGHT 40
 #define SERVER_PORT 12345
 #define BUFFER_SIZE 4096
 #define FILE_LIST_FILE "server_files.txt"

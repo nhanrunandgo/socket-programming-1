@@ -1,0 +1,19 @@
+# Ignore all executable files 
+*.out
+*.o
+*.so
+*.a
+*.exe
+*.dll
+*.bin
+*.elf
+
+# Ignore .vscode folder
+.vscode/
+client/
+
+# Sample codes
+*chatgpt*
+*deepseek*
+*grok*
+*tmp*

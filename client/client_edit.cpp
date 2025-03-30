@@ -1,4 +1,20 @@
-#include "client.h"
+#include "client_edit.h"
+
+/// @brief To use to manage sent packets status
+struct PendingPacket {
+    std::chrono::steady_clock::time_point send_time;
+    int retry_count;
+    char buffer[BUFFER_SIZE];
+    size_t buffer_len;
+    bool needs_retry; // Add flag to manage retry
+};
+
+std::atomic<bool> running{true};           // Flag to control thread
+std::mutex packets_mtx;                   // Mutex for syncing
+std::condition_variable timeout_cv;       // Condition variable
+std::vector<PendingPacket> pending_packets;
+struct sockaddr_in server_addr;
+socklen_t server_addr_len = sizeof(server_addr);
 
 uint64_t ntohll(uint64_t value) {
     return (((uint64_t)ntohl(value & 0xFFFFFFFF)) << 32) | ntohl(value >> 32); 
@@ -8,6 +24,117 @@ uint64_t htonll(uint64_t value) {
     return (((uint64_t)htonl(value & 0xFFFFFFFF)) << 32) | htonl(value >> 32); 
 } 
 
-int main() {
+void empty_lines(int height = CONSOLE_HEIGHT) {
+    while(height--) {
+        std::cout << "\n";
+    }
+}
+
+void resend_packet_thread(int client_sock) {
+    while(running) {
+        auto now = std::chrono::steady_clock::now();
+        std::vector<uint64_t> to_remove;
+
+        {   
+            std::unique_lock<std::mutex> lock(packets_mtx);
+
+            for (PendingPacket& packet: pending_packets) {
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - packet.send_time);
+
+                if(elapsed.count() > RETRY_DELAY_MS) {
+                    // Resend packet
+                    sendto(client_sock, packet.buffer, packet.buffer_len, 0,
+                            (sockaddr*)&server_addr, server_addr_len);
+
+                    packet.send_time = now;
+                    std::cout << "[RESEND]: " << packet.buffer << "\n"; 
+                }
+            }
+        }
+
+        // Wait with timeout
+        std::unique_lock<std::mutex> lock(packets_mtx);
+        timeout_cv.wait_for(lock, std::chrono::milliseconds(RETRY_DELAY_MS), [&]{
+            return !running.load();
+        });
+    }
+}
+
+Metadata get_metadata(std::string filename) {
+    char buffer[BUFFER_SIZE];
+    int client_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    std::string message = REQUEST_METADATA + (std::string)":" + filename;
+
+    if (client_sock < 0) {
+        std::cerr << "Lỗi tạo socket" << std::endl;
+        exit(0);
+    }
+
+    PendingPacket meta_request;
+    strcpy(meta_request.buffer, message.c_str());
+    meta_request.buffer_len = message.size();
+    meta_request.send_time = std::chrono::steady_clock::now();
+
+    std::thread timeout_thread(resend_packet_thread, client_sock);
+    while(true) {
+        // Load from socket...
+        int recv_len = recvfrom(client_sock, buffer, BUFFER_SIZE - 1, 0,
+                                    (struct sockaddr*)&server_addr, &server_addr_len);
+
+        if(recv_len > 0) {
+            running = false;
+            std::cerr << buffer << "\n";
+            break;
+        }
+        timeout_cv.notify_one();
+    }
+
+    // Clean up
+    timeout_cv.notify_all();
+    timeout_thread.join();
+    close(client_sock);
+}
+
+void read_console(char* server_ip) {
+    std::cout << "Nhập IP server (mặc định 127.0.0.1): ";
+    while (std::cin.getline(server_ip, 15)) {
+        if (strlen(server_ip) == 0) {
+            strcpy(server_ip, "127.0.0.1");
+            break;
+        }
+
+        if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
+            std::cerr << "Địa chỉ IP không hợp lệ" << std::endl;
+            continue;
+        }
+
+    }
+    empty_lines(4);
+    std::cout << "Đang lấy danh sách file từ server [" << server_ip << ":" << SERVER_PORT << "]: ...\n";
+
+    get_metadata(SERVER_LIST_FILE);
+
+    empty_lines(2);
+    std::cout << "Nhập tên file (để trống để lấy danh sách, 'exit' để thoát):\n";
     
+}
+
+int main() {
+    char buffer[BUFFER_SIZE];
+
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(SERVER_PORT);
+    
+    char server_ip[16];
+    
+    auto signal_handler = [](int signum) {
+        std::cout << "\nĐã nhận tín hiệu Ctrl+C. Đang kết thúc...\n";
+        exit(0);
+    };
+    signal(SIGINT, signal_handler);
+
+    read_console(server_ip);
+    
+
 }
