@@ -9,9 +9,10 @@ struct PendingPacket {
     bool needs_retry; // Add flag to manage retry
 };
 
+static uint32_t crc_table[256];             // CRC32 table (2^8=256)
 std::atomic<bool> running{true};           // Flag to control thread
 std::mutex packets_mtx;                   // Mutex for syncing
-std::condition_variable timeout_cv;       // Condition variable
+std::condition_variable timeout_cv;      // Condition variable
 std::vector<PendingPacket> pending_packets;
 struct sockaddr_in server_addr;
 socklen_t server_addr_len = sizeof(server_addr);
@@ -28,6 +29,45 @@ void empty_lines(int height = CONSOLE_HEIGHT) {
     while(height--) {
         std::cout << "\n";
     }
+}
+
+/// @brief create CRC32 looking table using 0xEDB88320 polynomial
+void init_crc_table() {
+    uint32_t polynomial = 0xEDB88320;
+    for (uint32_t i = 0; i < 256; i++) {
+        uint32_t c = i;
+        for (size_t j = 0; j < 8; j++) {
+            if (c & 1)
+                c = polynomial ^ (c >> 1);
+            else
+                c = c >> 1;
+        }
+        crc_table[i] = c;
+    }
+}
+
+/// @brief calculate crc32 checksum for a string data
+uint32_t crc32(char* buf, size_t len) {
+    uint32_t crc = 0xFFFFFFFF;
+    for (size_t i = 0; i < len; i++) {
+        uint8_t index = (crc ^ (uint8_t)buf[i]) & 0xFF;
+        crc = crc_table[index] ^ (crc >> 8);
+    }
+    return crc ^ 0xFFFFFFFF;
+}
+
+/// @brief decode and remove checksum to original message, return True if crc checking is similar
+bool decode_and_popback(char* message, size_t& len) {
+    uint32_t crc_calculated = htonl(crc32(message, len - 4));
+    uint32_t crc_received;
+    memcpy(&crc_received, message + len - 4, sizeof(crc_received));
+    len -= sizeof(crc_received);
+    message[len] = '\0';
+
+    std::cerr << "CRC32: " << crc_received <<" vs " << crc_calculated << " " 
+                                        << (crc_received == crc_calculated ? "True": "False") << "\n";
+
+    return (crc_received == crc_calculated);
 }
 
 void resend_packet_thread(int client_sock) {
@@ -74,21 +114,29 @@ Metadata get_metadata(std::string filename) {
     strcpy(meta_request.buffer, message.c_str());
     meta_request.buffer_len = message.size();
     meta_request.send_time = std::chrono::steady_clock::now();
+    pending_packets.push_back(meta_request);    // Bắt đầu vào việc gửi và resend (giả sử đã được gửi lần đầu)
 
     std::thread timeout_thread(resend_packet_thread, client_sock);
     while(true) {
         // Load from socket...
-        int recv_len = recvfrom(client_sock, buffer, BUFFER_SIZE - 1, 0,
+        size_t recv_len = recvfrom(client_sock, buffer, BUFFER_SIZE - 1, 0,
                                     (struct sockaddr*)&server_addr, &server_addr_len);
+        buffer[recv_len] = '\0';
 
         if(recv_len > 0) {
-            running = false;
-            std::cerr << buffer << "\n";
-            break;
+            message = buffer;
+            decode_and_popback(buffer, recv_len);
+            
+            std::regex pattern(R"(^REPLY:\d+:META:.+$)");   // Pattern of meta reply packet
+            if (std::regex_match(message, pattern)) {
+                running = false;
+                break;
+            }
         }
         timeout_cv.notify_one();
     }
-
+    
+    std::cerr << "Exit\n";
     // Clean up
     timeout_cv.notify_all();
     timeout_thread.join();
