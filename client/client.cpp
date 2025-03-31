@@ -493,6 +493,7 @@ void download_and_checkfile() {
             file.close();
             download_file(filename);
             std::cout << "\nRefreshing...\n";
+            return;
         }
     }
 
