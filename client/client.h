@@ -12,6 +12,7 @@
 #include <arpa/inet.h>
 #include <limits>
 #include <thread>
+#include <dirent.h>
 #include <mutex>
 #include <condition_variable>
 #include <map>
@@ -20,7 +21,14 @@
 #include <csignal>
 #include <numeric>
 #include <atomic>
+#include <unordered_map>
+#include <regex>
+#include <set>
+#include <fcntl.h>
+#include <cstdio>
 #include <errno.h> // For errno
+#include <iostream>
+#include <stdexcept>  // Để sử dụng std::runtime_error
 
 #ifdef _WIN32
 #include <direct.h>
@@ -30,17 +38,22 @@
 #include <sys/stat.h>
 #endif
 
-#define CONSOLE_HEIGHT 40
+#define CONSOLE_HEIGHT 25
 #define SERVER_PORT 12345
 #define BUFFER_SIZE 4096
-#define FILE_LIST_FILE "server_files.txt"
-#define INPUT_FILE "input.txt"
+#define TOKEN_LIMIT 200 // tokens per second
+#define SENDING_TIMEOUT 200
+#define REFRESH_CONSOLE 1000
+#define SERVER_LIST_FILE "server_files.txt"
+#define CLIENT_LIST_FILE "input.txt"
 #define NUM_DOWNLOAD_THREADS 4
 #define DOWNLOADS_DIR "downloads/"
 #define MAX_RETRIES 3
-#define RETRY_DELAY_MS 1000
+#define RETRY_DELAY_MS 200
 #define MAX_FILENAME_LENGTH 256
 
+#define REQUEST_METADATA "REQUEST_METADATA"
+#define REQUEST_CHUNK "REQUEST_CHUNK"
 #define REPLY "REPLY"
 
 #pragma pack(push, 1)
@@ -59,6 +72,12 @@ struct ReceivedChunk {
     }
 };
 
+struct ThreadTracker {
+    uint64_t total_chunk = 0;
+    uint64_t downloaded_chunk = 0;
+    std::set<uint64_t> downloading_chunk;
+};
+
 struct AckPacket {
     char type; // 'A' for ACK
     uint64_t seq_num;
@@ -72,19 +91,5 @@ uint64_t htonll(uint64_t value);
 extern std::set<std::string> processed_files;
 extern std::mutex processed_files_mutex;
 
-// Hàm đọc danh sách file mới từ input.txt
-std::vector<std::string> get_new_files();
-
-// Hàm gửi ACK (có thể cần điều chỉnh hoặc loại bỏ tùy thuộc vào server)
-void send_ack(int sock, const sockaddr_in& server_addr, socklen_t addr_len, uint64_t seq_num);
-
-// Hàm gửi yêu cầu metadata đến server
-bool request_metadata(int sock, const sockaddr_in& server_addr, socklen_t addr_len, const std::string& filename, Metadata& metadata, uint64_t seq_num);
-
-// Hàm gửi yêu cầu chunk và nhận dữ liệu
-bool download_chunk(int sock, const sockaddr_in& server_addr, socklen_t addr_len, const std::string& filename, uint64_t chunk_id, std::vector<char>& data, uint64_t seq_num);
-
-// Hàm worker cho mỗi thread download
-void download_worker(int client_sock, const sockaddr_in& server_addr, socklen_t addr_len, const std::string& filename, uint64_t start_chunk, uint64_t end_chunk, std::map<uint64_t, std::vector<char>>& received_chunks, std::atomic<uint64_t>& chunks_received_count, uint64_t total_chunks, std::atomic<uint64_t>& next_seq_num, std::atomic<uint64_t>& thread_chunks_received, uint64_t total_thread_chunks);
 
 #endif // CLIENT_H

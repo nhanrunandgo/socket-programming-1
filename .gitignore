@@ -10,10 +10,8 @@
 
 # Ignore .vscode folder
 .vscode/
-client/
 
 # Sample codes
-*chatgpt*
-*deepseek*
-*grok*
 *tmp*
+*crc32*
+*edit*

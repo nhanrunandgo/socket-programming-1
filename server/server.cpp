@@ -45,11 +45,12 @@ struct PendingPacket {
 };
 
 /*-------------------Global variables-------------------*/
-time_t last_reload = INT16_MIN; // -INF
-std::map<std::pair<in_addr_t, in_port_t>, uint64_t> connected_device; // (IP, port) => ACK
-std::atomic<bool> running{true};           // Flag to control thread
-std::mutex packets_mtx;                   // Mutex for syncing
-std::condition_variable timeout_cv;       // Condition variable
+static uint32_t crc_table[256];                                         // CRC32 table (2^8=256)
+time_t last_reload = INT16_MIN;                                         // -INF
+std::map<std::pair<in_addr_t, in_port_t>, uint64_t> connected_device;   // (IP, port) => ACK
+std::atomic<bool> running{true};                                        // Flag to control thread
+std::mutex packets_mtx;                                                 // Mutex for syncing
+std::condition_variable timeout_cv;                                     // Condition variable
 std::unordered_map<uint64_t, PendingPacket> pending_packets;
 
 /*-------------------Functions-------------------*/
@@ -69,8 +70,14 @@ void handle_chunk_request(int server_sock, struct sockaddr_in &client_addr, sock
 void handle_reply_to_client(int server_sock, struct sockaddr_in &client_addr, socklen_t &client_len, char* buffer, size_t buffer_len);
 /// @brief Handle ACK reply from client
 void handle_reply_from_client(int server_sock, struct sockaddr_in &client_addr, socklen_t &client_len, char* buffer, size_t buffer_len);
-/// @brief
+/// @brief  Handle checking missing packets and resend them
 void timeout_checker_thread(int server_sock);
+/// @brief create CRC32 looking table using 0xEDB88320 polynomial
+void init_crc_table();
+/// @brief calculate crc32 checksum for a string data
+uint32_t crc32(char* buf, size_t len);
+/// @brief encode the message/data/buffer to 4-byte checksum and add to the message
+void encode_and_push_back(char* message, size_t& len);
 
 int main() {
     struct sockaddr_in server_addr, client_addr;
@@ -112,8 +119,8 @@ int main() {
             buffer[recv_len] = '\0'; // Add to make sure the data has ending point
 
             // Debug
-            std::cout << "\n>>> Received from [" << inet_ntoa(client_addr.sin_addr) << ":"
-                      << ntohs(client_addr.sin_port) << "]: " << buffer << "\n";
+            // std::cout << "\n>>> Received from [" << inet_ntoa(client_addr.sin_addr) << ":"
+            //           << ntohs(client_addr.sin_port) << "]: " << buffer << "\n";
 
             // Handle all replies (Commonly ACK replies)
             if (strncmp(buffer, REPLY, strlen(REPLY)) == 0) {
@@ -176,7 +183,6 @@ void update_list() {
             continue;
         }
 
-        printf("%-30s %-15ld\n", entry->d_name, file_stat.st_size);        // Print to screen
         fprintf(file, "%s %ld\n", entry->d_name, file_stat.st_size);        // Write to file
     }
     fclose(file);
@@ -213,7 +219,6 @@ void handle_fullname_getter(char* fullpath, char* &filename) {
     else {
         sprintf(fullpath, "%s/%s", DOWNLOAD_DIR, filename);
     }
-    std::cerr << fullpath << "\n";
 }
 
 /// @brief Handle metadata requests (REQUEST_METADATA:filename)
@@ -303,9 +308,9 @@ void handle_chunk_request(int server_sock, struct sockaddr_in &client_addr, sock
     strncpy(filename, tok, sizeof(filename) - 1);
     handle_fullname_getter(fullpath, tok);
 
-    //Debug
-    std::cout << "\n--- REQUEST ---\n"
-              << "File: " << filename << "\n";
+    // //Debug
+    // std::cout << "\n--- REQUEST ---\n"
+    //           << "File: " << filename << "\n";
 
     tok = strtok(NULL, ":");      // Chunk ID
     // Chunk ID does not exist
@@ -315,9 +320,9 @@ void handle_chunk_request(int server_sock, struct sockaddr_in &client_addr, sock
     }
     uint64_t chunk_index = std::strtoul(tok, nullptr, 10);
 
-    //Debug
-    std::cout<< "Chunk ID: " << chunk_index << "\n"
-             << "----------------\n";
+    // //Debug
+    // std::cout<< "Chunk ID: " << chunk_index << "\n"
+    //          << "----------------\n";
 
     // Read file
     int fd = open(fullpath, O_RDONLY);
@@ -388,11 +393,11 @@ void timeout_checker_thread(int server_sock) {
 
                         packet.retry_count++;
                         packet.send_time = now;
-                        std::cout << "[RETRY] Seq " << seq_num << " (attempt "
-                                  << packet.retry_count << ")\n";
+                        // std::cout << "[RETRY] Seq " << seq_num << " (attempt "
+                        //           << packet.retry_count << ")\n";
                     } else {
                         to_remove.push_back(seq_num);
-                        std::cout << "[DROP] Seq " << seq_num << " (max retries)\n";
+                        // std::cout << "[DROP] Seq " << seq_num << " (max retries)\n";
                     }
                 }
             }
@@ -427,6 +432,7 @@ void handle_reply_to_client(int server_sock, sockaddr_in &client_addr,
     size_t header_len = strlen(message);
     memcpy(message + header_len, buffer, buffer_len);
     size_t total_len = header_len + buffer_len;
+    encode_and_push_back(message, total_len);
 
     // Save to pending
     PendingPacket packet {
@@ -438,14 +444,13 @@ void handle_reply_to_client(int server_sock, sockaddr_in &client_addr,
     memcpy(packet.buffer, message, total_len);
 
     pending_packets[current_seq] = packet;
-
     
     // Initial send
     sendto(server_sock, message, total_len, 0,
            (sockaddr*)&client_addr, client_len);
 
-    std::cout << "[SEND] Seq " << current_seq << " to "
-              << inet_ntoa(client_addr.sin_addr) << "\n";
+    // std::cout << "[SEND] Seq " << current_seq << " to "
+    //           << inet_ntoa(client_addr.sin_addr) << "\n";
     timeout_cv.notify_one();
 }
 
@@ -456,7 +461,40 @@ void handle_reply_from_client(int server_sock, sockaddr_in &client_addr,
 
     std::lock_guard<std::mutex> lock(packets_mtx);
     if(pending_packets.erase(seq_num)) {
-        std::cout << "[ACK] Seq " << seq_num << " from "
-                  << inet_ntoa(client_addr.sin_addr) << "\n";
+        // std::cout << "[ACK] Seq " << seq_num << " from "
+        //           << inet_ntoa(client_addr.sin_addr) << "\n";
     }
+}
+
+/// @brief create CRC32 looking table using 0xEDB88320 polynomial
+void init_crc_table() {
+    uint32_t polynomial = 0xEDB88320;
+    for (uint32_t i = 0; i < 256; i++) {
+        uint32_t c = i;
+        for (size_t j = 0; j < 8; j++) {
+            if (c & 1)
+                c = polynomial ^ (c >> 1);
+            else
+                c = c >> 1;
+        }
+        crc_table[i] = c;
+    }
+}
+
+/// @brief calculate crc32 checksum for a string data
+uint32_t crc32(char* buf, size_t len) {
+    uint32_t crc = 0xFFFFFFFF;
+    for (size_t i = 0; i < len; i++) {
+        uint8_t index = (crc ^ (uint8_t)buf[i]) & 0xFF;
+        crc = crc_table[index] ^ (crc >> 8);
+    }
+    return crc ^ 0xFFFFFFFF;
+}
+
+/// @brief encode the message/data/buffer to 4-byte checksum and add to the message
+void encode_and_push_back(char* message, size_t& len) {
+    uint32_t crc = htonl(crc32(message, len));
+    memcpy(message + len, &crc, sizeof(crc));
+    len += sizeof(crc);
+    //std::cerr << "CRC32 code: " << crc << "\n";
 }
