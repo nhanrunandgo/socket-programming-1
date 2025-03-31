@@ -512,6 +512,7 @@ void read_console(char* server_ip) {
             std::cerr << "Địa chỉ IP không hợp lệ" << std::endl;
             continue;
         }
+        else break;
 
     }
     empty_lines(0);
