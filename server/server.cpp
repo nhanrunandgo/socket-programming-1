@@ -91,6 +91,11 @@ int main() {
         return 404;
     }
 
+    // Increase buffer to avoid congestion
+    int buffer_size = 4 * 1024 * 1024; // 4MB
+    setsockopt(sock_fd, SOL_SOCKET, SO_RCVBUF, &buffer_size, sizeof(buffer_size));
+    setsockopt(sock_fd, SOL_SOCKET, SO_SNDBUF, &buffer_size, sizeof(buffer_size));
+
     // Configure server IP/port
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
