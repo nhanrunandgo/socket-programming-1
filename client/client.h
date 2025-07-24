@@ -41,15 +41,15 @@
 #define CONSOLE_HEIGHT 25
 #define SERVER_PORT 12345
 #define BUFFER_SIZE 4096
-#define TOKEN_LIMIT 200 // tokens per second
-#define SENDING_TIMEOUT 200
+#define TOKEN_LIMIT 3000 // tokens per second
+#define SENDING_TIMEOUT 50
 #define REFRESH_CONSOLE 1000
 #define SERVER_LIST_FILE "server_files.txt"
 #define CLIENT_LIST_FILE "input.txt"
 #define NUM_DOWNLOAD_THREADS 4
 #define DOWNLOADS_DIR "downloads/"
-#define MAX_RETRIES 3
-#define RETRY_DELAY_MS 200
+#define MAX_RETRIES 1
+#define RETRY_DELAY_MS 100
 #define MAX_FILENAME_LENGTH 256
 
 #define REQUEST_METADATA "REQUEST_METADATA"

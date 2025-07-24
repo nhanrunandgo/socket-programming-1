@@ -1,5 +1,6 @@
 #include <iostream>
 #include <cstring>
+#include <signal.h>
 #include <unistd.h>
 #include <dirent.h>
 #include <arpa/inet.h>
@@ -45,6 +46,7 @@ struct PendingPacket {
 };
 
 /*-------------------Global variables-------------------*/
+int sock_fd;                                                             // Unique UDP socket file descriptor
 static uint32_t crc_table[256];                                         // CRC32 table (2^8=256)
 time_t last_reload = INT16_MIN;                                         // -INF
 std::map<std::pair<in_addr_t, in_port_t>, uint64_t> connected_device;   // (IP, port) => ACK
@@ -78,6 +80,8 @@ void init_crc_table();
 uint32_t crc32(char* buf, size_t len);
 /// @brief encode the message/data/buffer to 4-byte checksum and add to the message
 void encode_and_push_back(char* message, size_t& len);
+/// @brief Cleanup and exit
+void signal_handler(int);
 
 int main() {
     struct sockaddr_in server_addr, client_addr;
@@ -85,14 +89,14 @@ int main() {
     char buffer[BUFFER_SIZE];
 
     // Create UDP socket
-    int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if(sock_fd < 0) {// Error creating socket
         std::cout << "Error initializing socket\n";
         return 404;
     }
 
     // Increase buffer to avoid congestion
-    int buffer_size = 4 * 1024 * 1024; // 4MB
+    int buffer_size = 50 * 1024 * 1024; // 50MB
     setsockopt(sock_fd, SOL_SOCKET, SO_RCVBUF, &buffer_size, sizeof(buffer_size));
     setsockopt(sock_fd, SOL_SOCKET, SO_SNDBUF, &buffer_size, sizeof(buffer_size));
 
@@ -111,10 +115,16 @@ int main() {
 
     std::cout << "UDP Server is running on port: " << SERVER_PORT << "...\n";
 
+    struct sigaction sa{};
+    sa.sa_handler = signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, nullptr);
+    
     // Start timeout thread
     std::thread timeout_thread(timeout_checker_thread, sock_fd);
-
-    while(true) {
+    
+    while(running) {
         // Load from socket...
         int recv_len = recvfrom(sock_fd, buffer, BUFFER_SIZE - 1, 0,
                                     (struct sockaddr*)&client_addr, &client_len);
@@ -148,13 +158,22 @@ int main() {
         timeout_cv.notify_one();
     }
 
-    // Clean up
-    running = false;
-    timeout_cv.notify_all();
+    // Exit while (running == false)
+    std::cout << "\nIdentified Ctrl+C signal. Exiting...\n";
+
+    // Join and close socket
     timeout_thread.join();
     close(sock_fd);
+
     return 0;
 }
+
+/// @brief Cleanup flag and notify
+void signal_handler(int) {
+    running = false;
+    timeout_cv.notify_all();
+}
+
 /// @brief Update list of files to download
 void update_list() {
     std::cout << "Database is old. Reloading...\n";
@@ -173,6 +192,7 @@ void update_list() {
     FILE* file = fopen(DOWNLOAD_LIST, "w");
     if (file == NULL) {
         std::cout << "Error: Unable to create/open file " << DOWNLOAD_LIST << "\n";
+        closedir(dir);
         exit(0);
     }
 
@@ -334,14 +354,16 @@ void handle_chunk_request(int server_sock, struct sockaddr_in &client_addr, sock
 
     // File do not open
     if (fd == -1) {
+        close(fd);
         handle_reply_to_client(server_sock, client_addr, client_len, BAD_REQUEST, strlen(BAD_REQUEST));
         return;
     }
 
     // Unable to read file information
     if (fstat(fd, &file_stat) != 0) {
+        close(fd);
         handle_reply_to_client(server_sock, client_addr, client_len, BAD_REQUEST, strlen(BAD_REQUEST));
-        return;
+        return; 
     }
 
     uint32_t file_size = file_stat.st_size;
@@ -349,6 +371,7 @@ void handle_chunk_request(int server_sock, struct sockaddr_in &client_addr, sock
 
     // If request chunk ID exceeded accepted range
     if (chunk_index >= num_chunks) {
+        close(fd);
         handle_reply_to_client(server_sock, client_addr, client_len, BAD_REQUEST, strlen(BAD_REQUEST));
         return;
     }
@@ -362,6 +385,7 @@ void handle_chunk_request(int server_sock, struct sockaddr_in &client_addr, sock
     char chunk_data[CHUNK_SIZE];
     lseek(fd, offset, SEEK_SET);
     ssize_t read_len = read(fd, chunk_data, actual_chunk_size);
+    close(fd);
 
     // File has been changed or modified (smaller than expect)
     if (read_len != actual_chunk_size) {

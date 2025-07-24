@@ -42,5 +42,5 @@ char INTERNAL_ERROR[] = "ERROR:Internal server error\0";
 #define DOWNLOAD_LIST "server_files.txt"
 
 
-#define MAX_RETRIES 3
-#define ACK_TIMEOUT 200 // milliseconds
+#define MAX_RETRIES 10
+#define ACK_TIMEOUT 20 // milliseconds
