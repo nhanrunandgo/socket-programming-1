@@ -259,117 +259,6 @@ void overwriteAtChunk(std::string filename, uint64_t chunk_id, uint64_t chunk_si
     file.close();
 }
 
-// void thread_chunk(int thread_part, int client_sock, std::string filename, uint64_t start_chunk, uint64_t end_chunk, struct ThreadTracker& tracker, struct Metadata& metadata) {
-//     char buffer[BUFFER_SIZE];
-//     fd_set readfds;
-//     struct timeval timeout;
-
-//     for (uint64_t chunk_id = start_chunk; chunk_id < end_chunk; chunk_id++) {
-//         tracker.downloading_chunk.insert(chunk_id);
-//     }
-
-//     while (true) {
-//         FD_ZERO(&readfds);
-//         FD_SET(client_sock, &readfds);
-
-//         // Thiết lập timeout (ví dụ: 1000ms)
-//         timeout.tv_sec = SENDING_TIMEOUT / 1000;
-//         timeout.tv_usec = (SENDING_TIMEOUT % 1000) * 1000;
-
-//         // Chờ sự kiện hoặc timeout
-//         int activity = select(client_sock + 1, &readfds, nullptr, nullptr, &timeout);
-
-//         if (activity < 0) {
-//             perror("select error");
-//             break;
-//         }
-
-//         // Xử lý nhận dữ liệu nếu có
-//         if (FD_ISSET(client_sock, &readfds)) {
-//             struct sockaddr_in clientAddr;
-//             socklen_t addrLen = sizeof(clientAddr);
-//             size_t recv_len = recvfrom(client_sock, buffer, sizeof(buffer), 0,
-//                                             (struct sockaddr*)&clientAddr, &addrLen);
-
-//             if (recv_len > BUFFER_SIZE) {
-//                 std::cout << "Lỗi tràn bộ nhớ!!!";
-//                 exit(0);
-//             }
-
-//             if (recv_len > 0) {
-//                 decode_and_popback(buffer, recv_len);
-//                 std::string message(buffer, recv_len); // Chuyển buffer sang string
-//                 std::vector<std::string> parts;
-//                 size_t pos = 0;
-//                 int erasedCount;
-//                 uint64_t seq_num;
-
-//                 // Tách các phần của message
-//                 for (int i = 0; i < 5; ++i) { // REPLY, seq, CHUNK, filename, chunk_id
-//                     size_t colon_pos = message.find(':', pos);
-//                     if (colon_pos == std::string::npos) {
-//                         std::cerr << "Invalid message format: missing fields!" << std::endl;
-//                         break;
-//                     }
-//                     parts.push_back(message.substr(pos, colon_pos - pos));
-//                     pos = colon_pos + 1;
-//                 }
-
-//                 if (parts.size() != 5){    // Gói tin lỗi
-//                     continue;
-//                 }
-
-//                 // Lấy phần dữ liệu sau chunk_id
-//                 std::string data_part = message.substr(pos);
-//                 size_t data_len = data_part.size();
-
-//                 // Kiểm tra chunk_id hợp lệ
-//                 uint64_t chunk_id;
-//                 try {
-//                     seq_num = std::stoull(parts[1]);
-//                     chunk_id = std::stoull(parts[4]);
-//                     send_ack(client_sock, seq_num);
-//                 } catch (const std::exception& e) { // Gói tin lỗi
-//                     std::cout << e.what() << "\n";
-//                     continue;
-//                 }
-                
-//                 erasedCount = tracker.downloading_chunk.erase(chunk_id);
-                
-//                 // Ghi dữ liệu vào file
-//                 if (data_len > 0 && erasedCount > 0 && parts[0] == REPLY && parts[2] == "CHUNK" && parts[3] == filename) {
-//                     overwriteAtChunk(filename, chunk_id, metadata.chunk_size, data_part.data(), data_len);
-//                     //std::cout << "[RECEIVED]: REPLY:" << parts[1] << ":CHUNK:" << filename << ":" << chunk_id << ":\n";
-//                 }
-//             }
-//         }
-        
-//         // Tải hết rồi thì thoát
-//         if (tracker.downloading_chunk.empty()) {
-//             break;
-//         }
-
-//         // Xử lý gửi request nếu đang trống
-//         if (activity == 0) {
-//             std::string header = REQUEST_CHUNK + (std::string)":" + filename + (std::string)":";   // Request chunk header
-//             int token_num = TOKEN_LIMIT;
-
-//             for (uint64_t number: tracker.downloading_chunk) {
-//                 if (token_num > 0)
-//                     token_num--;
-//                 else
-//                     break;
-                
-//                 std::string message = header + uint64_to_string_converter(number);
-//                 sendto(client_sock, message.c_str(), message.size(), 0,
-//                                 (const sockaddr*)&server_addr, server_addr_len);
-//             }
-//         }
-//     }
-
-//     close(client_sock);
-// }
-
 void multiplex_recv_loop(std::vector<int> client_sockets, const std::string& filename, const Metadata& metadata, ThreadTracker tracker[]) {
     char buffer[BUFFER_SIZE];
     fd_set readfds;
@@ -481,31 +370,19 @@ void multiplex_recv_loop(std::vector<int> client_sockets, const std::string& fil
 
 void download_file(std::string filename) {      // Data gets from file_downloading metadata
     struct Metadata metadata = get_metadata(filename);
-    struct ThreadTracker download_tracker[4];
-    // std::vector<std::thread> threads;
+    struct ThreadTracker download_tracker[4];    
     std::vector<int> client_sockets;
 
     createFileWithSize(filename, metadata.file_size);   // Fulfill file with dummy bytes
     auto now = std::chrono::steady_clock::now();
     
-    uint64_t socket_quantity = NUM_DOWNLOAD_THREADS;
-    // uint64_t chunks_per_thread = (metadata.num_chunks + NUM_DOWNLOAD_THREADS - 1) / NUM_DOWNLOAD_THREADS;
+    uint64_t socket_quantity = NUM_DOWNLOAD_THREADS;    
 
     for (uint64_t chunk_id = 0; chunk_id < metadata.num_chunks; ++chunk_id) {
         int owner = chunk_id % NUM_DOWNLOAD_THREADS;
         download_tracker[owner].downloading_chunk.insert(chunk_id);
         download_tracker[owner].total_chunk++;
-    }
-    
-    // //std::cout << metadata.num_chunks << "\n";
-    // for (int sock_id = 0; sock_id < socket_quantity; sock_id++) {
-    //     uint64_t start_chunk = sock_id * chunks_per_thread;
-    //     uint64_t end_chunk = std::min(chunks_per_thread * (sock_id + 1), metadata.num_chunks);
-    //     download_tracker[sock_id].total_chunk = end_chunk - start_chunk;
-
-    //     int socket_fd = create_socket();
-    //     threads.emplace_back(thread_chunk, sock_id + 1, socket_fd, filename, start_chunk, end_chunk, std::ref(download_tracker[sock_id]), std::ref(metadata));
-    // }
+    }    
 
     for (int sock_id = 0; sock_id < socket_quantity; sock_id++) {
         int socket_fd = create_socket();
@@ -533,12 +410,8 @@ void download_file(std::string filename) {      // Data gets from file_downloadi
             }
             last_seen = now;
         }
-    }
-    
-    // Đợi tất cả luồng kết thúc
-    // for (auto& t : threads) {
-    //     t.join();
-    // }
+    }    
+
     download_thread.join();
     std::cout << "Downloading " << filename <<" done.\n";
 }
