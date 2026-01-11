@@ -24,7 +24,7 @@ The project is designed with performance and reliability in mind, featuring:
 ## 📂 Directory Structure
 
 ```text
-socket-programming-1/
+udp-file-transfer/
 ├── client/
 │   ├── client.cpp          # Main client implementation (Multi-threaded download logic)
 │   ├── client.h            # Client headers, structs (Metadata, ReceivedChunk), and constants
